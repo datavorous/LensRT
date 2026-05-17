@@ -1,6 +1,40 @@
 # tinygraphparser
 
+[![Made with Python](https://img.shields.io/badge/Made%20with-Python-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+
 Parse TFLite / LiteRT-LM graphs and detect statically visible blockers to QNN delegate partitioning (missing builders, non-constant shape/index inputs).
+
+> [!WARNING]
+> Major portions of this code were generated with Claude Sonnet 4.6 and Opus 4.7, and were manually verified.
+
+## Quick Start
+
+### What it does
+
+Static analysis of TFLite / LiteRT-LM flatbuffers to identify which ops may be ineligible for QNN delegate partitioning due to missing builders or non-constant shape/index inputs. Does not execute the model, invoke the QNN SDK, or determine runtime behavior only flags statically visible blockers.
+
+### When to use it
+
+- Before attempting NPU deployment to identify partition fragmentation risk.
+- When diagnosing why a model fragments into many CPU fallbacks.
+- When comparing model exports to see if topology changes affect eligibility.
+
+### How to use it
+
+```python
+from tinygraphparser import (
+    LiteRTLMExtractor, TFLiteGraphParser, load_op_support,
+    simulate_partition, report_partitions
+)
+
+tflite_files = LiteRTLMExtractor.extract("model.litertlm", "./dump")
+graph = TFLiteGraphParser().parse(tflite_files[0])
+op_support = load_op_support("opSupportMap.csv")
+partitions = simulate_partition(graph, op_support)
+report_partitions(partitions)
+```
+
+See **[Extract](#extract)**, **[Parse](#parse)**, **[Op histogram](#op-histogram)**, **[Dynamic shape detection](#dynamic-shape-detection)**, **[Partition simulation](#partition-simulation)**, and **[Seam dump](#seam-dump)** for details on each step.
 
 ## Scope and non-goals
 
@@ -28,7 +62,7 @@ Every numeric or categorical output the tool currently emits, with definition an
 | **Partition count (NPU, CPU)** | Number of maximal contiguous runs classified as NPU-eligible or CPU-fallback by `simulate_partition` | Indicates the number of distinct static eligibility changes in the graph. A large number of alternating partitions signals frequent boundary transitions, which is a fragmentation concern under the modeled checks only. |
 | **Largest / smallest / mean NPU partition size** | Op counts of NPU-classified `Partition` objects, computed in `report_partition` | Larger NPU runs suggest fewer delegate-boundary crossings under the modeled checks. Can mislead: a single large NPU partition can still be rejected at runtime by dtype or attribute constraints not modeled here. |
 | **CPU fallback breakdown by reason** | Per-`reason` op count across all CPU partitions, grouped by `no_builder`, `dynamic_shape`, or `unsupported_composite` | Identifies which category of blocker drives fragmentation. Useful for prioritizing fixes: `no_builder` is a toolchain gap; `dynamic_shape` may be addressable by constant-folding. |
-| **Agreement percentage** | `(total_ops - divergent - false_cpu) / total_ops` from `compare_to_actual` | Fraction of ops where static classification matches reported actual. Can be high while all ops of interest are misclassified, if the majority of ops are trivially eligible and agree trivially. |
+| **Agreement percentage** | `(N - divergent - false_cpu) / N` from `compare_to_actual`, where `N` is the union of predicted NPU and CPU op indices | Fraction of ops where static classification matches reported actual. Can be high while all ops of interest are misclassified, if the majority of ops are trivially eligible and agree trivially. |
 | **Divergent op count** | Ops classified NPU by simulator but present in `actual["cpu_op_indices"]` | Lower-bounds the number of ops affected by factors outside this simulator's model. Does not identify which factor caused the discrepancy. |
 | **False-CPU op count** | Ops classified CPU by simulator but absent from `actual["cpu_op_indices"]` | Ops the simulator flagged as ineligible that the runtime accepted anyway. Possible causes: the `opSupportMap.csv` is stale, or a dynamic shape input was resolved by the runtime in a way the static analysis couldn't see. |
 
@@ -111,7 +145,7 @@ The op sequence, tensor names, dtypes, shapes, and which input tensors have cons
 
 ### Confidence
 
-**ACCURATE** for the fields listed in the graph schema. The constness flag, dtype, shape, and opname are read directly from flatbuffer fields with no inference. `const_values` decoding is accurate for INT32 tensors; other dtypes return `const_values: None` even if the buffer is non-empty.
+**PARTIAL** for the fields listed in the graph schema. The constness flag, dtype, shape, and opname are read directly from flatbuffer fields with no inference. `const_values` decoding is accurate for INT32 tensors; other dtypes return `const_values: None` even if the buffer is non-empty.
 
 ### Known limitations
 
@@ -119,6 +153,7 @@ The op sequence, tensor names, dtypes, shapes, and which input tensors have cons
 - Tensor shapes from heuristically extracted blobs may be zeroed or truncated at section boundaries; affected tensors are replaced by `_placeholder_tensor` with `shape: []` and `dtype: "UNKNOWN"`.
 - Output tensors do not carry an `is_constant` field; they are assumed to be runtime-computed.
 - Operator attributes (e.g. strides, padding mode, activation) are not decoded.
+- Falls back to synthesized `BUILTIN_<int>` / `str(type)` strings when enum lookup fails; corrupt tensors become placeholders with synthetic metadata.
 
 ---
 
@@ -223,7 +258,7 @@ Which contiguous op runs are blocked by a missing builder or a non-constant shap
 
 - `opSupportMap.csv` must be kept in sync with the SDK version under test; a stale CSV produces incorrect eligibility classifications with no warning.
 - The CamelCase-to-UPPER_SNAKE_CASE converter may mis-map op names not in `_NAME_OVERRIDES`; a silently wrong mapping causes a false `no_builder` classification.
-- Composite op eligibility is coarser than real dispatch: if any `SHLO_COMPOSITE` entry exists in the CSV, all `STABLEHLO_COMPOSITE` and `SHLO_COMPOSITE` ops are marked eligible, regardless of the composite's specific name.
+- If the bare `kLiteRtOpCodeShloComposite` row is present in the CSV, all `STABLEHLO_COMPOSITE` ops are marked eligible. Per-composite-name entries are ignored.
 - Linear walk assumes the op ordering in the flatbuffer reflects execution order; ops reordered by a compiler pass would not be reflected.
 
 ---
@@ -295,6 +330,5 @@ The size and location of the gap between static classification and reported runt
 ### Known limitations
 
 - `actual["cpu_op_indices"]` must be sourced from the same flatbuffer version and the same SDK run that produced the partition under test; any mismatch silently produces wrong agreement numbers.
-- Expansion of `(start, end)` to a contiguous range assumes no gaps in op indices within a partition; if the flatbuffer has non-contiguous op numbering, the expanded set will include indices that do not correspond to real ops.
 - Partition counts (`npu_partitions`, `cpu_partitions`) in `actual` are stored but not used in agreement computation; they are printed for reference only.
 - The comparison does not identify which specific unmodeled factor (dtype, attribute, SDK version) caused each divergent op.

@@ -1,11 +1,27 @@
 # tinygraphparser
 
+Static TFLite/LiteRT-LM graph analyzer for detecting static partitioning blockers.
+
 [![Made with Python](https://img.shields.io/badge/Made%20with-Python-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
 Parse TFLite / LiteRT-LM graphs and detect statically visible blockers to QNN delegate partitioning (missing builders, non-constant shape/index inputs).
 
 > [!WARNING]
 > Major portions of this code were generated with Claude Sonnet 4.6 and Opus 4.7, and were manually verified.
+
+## Index
+
+- [Quick Start](#quick-start)
+- [Scope and non-goals](#scope-and-non-goals)
+- [Setup](#setup)
+- [Extract](#extract)
+- [Parse](#parse)
+- [Op histogram](#op-histogram)
+- [Dynamic shape detection](#dynamic-shape-detection)
+- [Partition simulation](#partition-simulation)
+- [Seam dump](#seam-dump)
+- [Predicted vs actual](#predicted-vs-actual)
+- [Metrics produced](#metrics-produced)
 
 ## Quick Start
 
@@ -50,24 +66,6 @@ uv sync
 uv run python examples/main.py
 ```
 
-## Metrics produced
-
-Every numeric or categorical output the tool currently emits, with definition and interpretation guidance.
-
-| Metric | Definition | Interpretation guidance |
-|--------|-----------|------------------------|
-| **Op count per subgraph** | `len(sg["ops"])` for each subgraph in the parsed graph dict | Baseline denominator for all other per-subgraph metrics. A subgraph with very few ops is unlikely to contribute meaningful fragmentation signal. |
-| **Op-type histogram (count, %, dtype split)** | Per-opname count, percentage of total ops, and per-output-dtype breakdown via `collections.Counter` | Surfaces the hot path and where mixed-precision occurs. Dominated by the wrong op type (e.g. many INT8 ops when expecting FLOAT32) is a signal worth investigating before partition analysis. |
-| **Dynamic-shape candidate count** | Number of ops in `_SHAPE_INDEX_SLOTS` whose designated input slot is either non-constant or contains `-1` (RESHAPE only) | A high count suggests many ops may be ineligible for static NPU allocation. Does not confirm runtime behavior; only flags a statically visible condition. |
-| **Partition count (NPU, CPU)** | Number of maximal contiguous runs classified as NPU-eligible or CPU-fallback by `simulate_partition` | Indicates the number of distinct static eligibility changes in the graph. A large number of alternating partitions signals frequent boundary transitions, which is a fragmentation concern under the modeled checks only. |
-| **Largest / smallest / mean NPU partition size** | Op counts of NPU-classified `Partition` objects, computed in `report_partition` | Larger NPU runs suggest fewer delegate-boundary crossings under the modeled checks. Can mislead: a single large NPU partition can still be rejected at runtime by dtype or attribute constraints not modeled here. |
-| **CPU fallback breakdown by reason** | Per-`reason` op count across all CPU partitions, grouped by `no_builder`, `dynamic_shape`, or `unsupported_composite` | Identifies which category of blocker drives fragmentation. Useful for prioritizing fixes: `no_builder` is a toolchain gap; `dynamic_shape` may be addressable by constant-folding. |
-| **Agreement percentage** | `(N - divergent - false_cpu) / N` from `compare_to_actual`, where `N` is the union of predicted NPU and CPU op indices | Fraction of ops where static classification matches reported actual. Can be high while all ops of interest are misclassified, if the majority of ops are trivially eligible and agree trivially. |
-| **Divergent op count** | Ops classified NPU by simulator but present in `actual["cpu_op_indices"]` | Lower-bounds the number of ops affected by factors outside this simulator's model. Does not identify which factor caused the discrepancy. |
-| **False-CPU op count** | Ops classified CPU by simulator but absent from `actual["cpu_op_indices"]` | Ops the simulator flagged as ineligible that the runtime accepted anyway. Possible causes: the `opSupportMap.csv` is stale, or a dynamic shape input was resolved by the runtime in a way the static analysis couldn't see. |
-
----
-
 ## Extract
 
 Scans the binary for `TFL3` magic bytes. For each hit, walks back up to 100 bytes to find a plausible flatbuffer root offset and slices out the blob. Writes each section as a separate `.tflite` file.
@@ -99,8 +97,7 @@ Which byte ranges in a `.litertlm` file are likely to be independent TFLite flat
 - End-of-blob trimming (`next_magic - 100`) can truncate trailing tensor data if two `TFL3` markers are within 100 bytes of each other.
 - Corrupt or partial extractions produce flatbuffers with invalid tensor offsets near section boundaries; `TFLiteGraphParser` handles these with `_placeholder_tensor` fallbacks, but data in those slots is lost.
 - No checksum or schema validation is performed on extracted blobs.
-
----
+- No checksum or schema validation is performed on extracted blobs.
 
 ## Parse
 
@@ -154,8 +151,7 @@ The op sequence, tensor names, dtypes, shapes, and which input tensors have cons
 - Output tensors do not carry an `is_constant` field; they are assumed to be runtime-computed.
 - Operator attributes (e.g. strides, padding mode, activation) are not decoded.
 - Falls back to synthesized `BUILTIN_<int>` / `str(type)` strings when enum lookup fails; corrupt tensors become placeholders with synthetic metadata.
-
----
+- Falls back to synthesized `BUILTIN_<int>` / `str(type)` strings when enum lookup fails; corrupt tensors become placeholders with synthetic metadata.
 
 ## Op histogram
 
@@ -187,8 +183,7 @@ Which op types dominate the graph, and at what output precision. This answers: "
 - Dtype is taken from `output[0]` only. An op with heterogeneous output dtypes (e.g. a comparison op producing BOOL from FLOAT32 inputs) is counted under the dtype of its first output.
 - Ops with no outputs are counted under `"UNKNOWN"` dtype.
 - Histogram covers all subgraphs combined; per-subgraph breakdown requires calling `op_histogram` on a filtered graph dict.
-
----
+- Histogram covers all subgraphs combined; per-subgraph breakdown requires calling `op_histogram` on a filtered graph dict.
 
 ## Dynamic shape detection
 
@@ -223,8 +218,7 @@ Which ops have shape or index inputs that are not fully resolved at compile time
 - `EXPAND_DIMS` is in the table but is not listed in the README op list above; check the source if coverage matters.
 - A slot flagged `runtime` by this tool may be constant-folded by a downstream compiler pass; this tool has no visibility into compiler transformations.
 - `_placeholder_tensor` entries (from corrupt extraction boundaries) have `is_constant: False` and will be reported as `runtime`, which may be a false positive.
-
----
+- `_placeholder_tensor` entries (from corrupt extraction boundaries) have `is_constant: False` and will be reported as `runtime`, which may be a false positive.
 
 ## Partition simulation
 
@@ -260,8 +254,7 @@ Which contiguous op runs are blocked by a missing builder or a non-constant shap
 - The CamelCase-to-UPPER_SNAKE_CASE converter may mis-map op names not in `_NAME_OVERRIDES`; a silently wrong mapping causes a false `no_builder` classification.
 - If the bare `kLiteRtOpCodeShloComposite` row is present in the CSV, all `STABLEHLO_COMPOSITE` ops are marked eligible. Per-composite-name entries are ignored.
 - Linear walk assumes the op ordering in the flatbuffer reflects execution order; ops reordered by a compiler pass would not be reflected.
-
----
+- Linear walk assumes the op ordering in the flatbuffer reflects execution order; ops reordered by a compiler pass would not be reflected.
 
 ## Seam dump
 
@@ -292,8 +285,7 @@ The exact ops that flank each CPU-fallback boundary, under the static classifica
 - Seam context is based on list position in the flatbuffer op array, not execution order; if ops were reordered by a compiler pass, the displayed neighbors may not be the true runtime neighbors.
 - The elision (`... N more in this partition ...`) hides interior ops; a blocker embedded deep inside a long CPU partition will not be visible at the default `context=2`.
 - Only one `kind` can be displayed per call; call twice (with `kind="NPU"` and `kind="CPU"`) to see both.
-
----
+- Only one `kind` can be displayed per call; call twice (with `kind="NPU"` and `kind="CPU"`) to see both.
 
 ## Predicted vs actual
 
@@ -332,3 +324,20 @@ The size and location of the gap between static classification and reported runt
 - `actual["cpu_op_indices"]` must be sourced from the same flatbuffer version and the same SDK run that produced the partition under test; any mismatch silently produces wrong agreement numbers.
 - Partition counts (`npu_partitions`, `cpu_partitions`) in `actual` are stored but not used in agreement computation; they are printed for reference only.
 - The comparison does not identify which specific unmodeled factor (dtype, attribute, SDK version) caused each divergent op.
+
+
+## Metrics produced
+
+Every numeric or categorical output the tool currently emits, with definition and interpretation guidance.
+
+| Metric | Definition | Interpretation guidance |
+|--------|-----------|------------------------|
+| **Op count per subgraph** | `len(sg["ops"])` for each subgraph in the parsed graph dict | Baseline denominator for all other per-subgraph metrics. A subgraph with very few ops is unlikely to contribute meaningful fragmentation signal. |
+| **Op-type histogram (count, %, dtype split)** | Per-opname count, percentage of total ops, and per-output-dtype breakdown via `collections.Counter` | Surfaces the hot path and where mixed-precision occurs. Dominated by the wrong op type (e.g. many INT8 ops when expecting FLOAT32) is a signal worth investigating before partition analysis. |
+| **Dynamic-shape candidate count** | Number of ops in `_SHAPE_INDEX_SLOTS` whose designated input slot is either non-constant or contains `-1` (RESHAPE only) | A high count suggests many ops may be ineligible for static NPU allocation. Does not confirm runtime behavior; only flags a statically visible condition. |
+| **Partition count (NPU, CPU)** | Number of maximal contiguous runs classified as NPU-eligible or CPU-fallback by `simulate_partition` | Indicates the number of distinct static eligibility changes in the graph. A large number of alternating partitions signals frequent boundary transitions, which is a fragmentation concern under the modeled checks only. |
+| **Largest / smallest / mean NPU partition size** | Op counts of NPU-classified `Partition` objects, computed in `report_partition` | Larger NPU runs suggest fewer delegate-boundary crossings under the modeled checks. Can mislead: a single large NPU partition can still be rejected at runtime by dtype or attribute constraints not modeled here. |
+| **CPU fallback breakdown by reason** | Per-`reason` op count across all CPU partitions, grouped by `no_builder`, `dynamic_shape`, or `unsupported_composite` | Identifies which category of blocker drives fragmentation. Useful for prioritizing fixes: `no_builder` is a toolchain gap; `dynamic_shape` may be addressable by constant-folding. |
+| **Agreement percentage** | `(N - divergent - false_cpu) / N` from `compare_to_actual`, where `N` is the union of predicted NPU and CPU op indices | Fraction of ops where static classification matches reported actual. Can be high while all ops of interest are misclassified, if the majority of ops are trivially eligible and agree trivially. |
+| **Divergent op count** | Ops classified NPU by simulator but present in `actual["cpu_op_indices"]` | Lower-bounds the number of ops affected by factors outside this simulator's model. Does not identify which factor caused the discrepancy. |
+| **False-CPU op count** | Ops classified CPU by simulator but absent from `actual["cpu_op_indices"]` | Ops the simulator flagged as ineligible that the runtime accepted anyway. Possible causes: the `opSupportMap.csv` is stale, or a dynamic shape input was resolved by the runtime in a way the static analysis couldn't see. |

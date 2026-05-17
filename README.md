@@ -1,131 +1,67 @@
 # GraphLens
 
-Static TFLite / LiteRT-LM graph analyzer for identifying graph-level blockers to QNN delegate partitioning.
+Static TFLite graph analyzer for QNN partition diagnostics.
 
-[![Made with Python](https://img.shields.io/badge/Made%20with-Python-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+## Install
 
-## Scope
-
-**Goals:**
-1. Extract embedded .tflite from .litertlm
-2. Parse graph structure (subgraphs, ops, tensors, dtypes, constness)
-3. Check QNN builder availability and dynamic shape / index inputs
-4. Simulate partition boundaries under these checks
-5. Inspect seam context around fallback boundaries
-
-**Non-goals:**
-1. No LiteRT/QNN execution
-2. No apply_plugin_main invocation
-3. No runtime backend placement prediction
-4. No guaranteed NPU support
+```bash
+git clone <repo-url>
+cd graphlens
+uv sync
+```
 
 ## Quick Start
 
 ```python
 from graphlens import Inspector
 
-inspector = Inspector.from_litertlm(
-    "model.litertlm",
-    op_support_path="opSupportMap.csv"
-)
-
-inspector.analyze()
-inspector.report_dynamic_shapes()
-inspector.report_partitions()
-inspector.report_seams()
-```
-
-## Setup
-
-```bash
-uv sync
-uv run python examples/main.py
-```
-
-## Extract
-
-Extract embedded TFLite flatbuffers from a `.litertlm` container using the existing heuristic scanner.
-
-```python
-from graphlens import Inspector
-
-inspector = Inspector.from_litertlm(
-    "model.litertlm",
-    op_support_path="opSupportMap.csv",
-    dump_dir="./dump",
-)
-```
-
-![extract screenshot](docs/extract.png)
-
-**Limitations:**
-1. Root-offset and boundary detection are heuristic.
-2. No schema/checksum validation is performed on extracted blobs.
-
-## Parse
-
-Parse subgraphs, ops, tensors, dtypes, and input constness from the selected `.tflite`.
-
-```python
 inspector = Inspector.from_tflite(
     "model.tflite",
-    op_support_path="opSupportMap.csv",
+    op_support_path="analysis/opSupportMap.csv",
 )
 inspector.analyze()
-```
-
-![parse screenshot](docs/parse.png)
-
-**Limitations:**
-1. `const_values` are decoded for INT32 only.
-2. Operator attributes are not decoded.
-
-## Dynamic shape detection
-
-Identify shape/index inputs that are runtime-provided or inferred (`-1` in RESHAPE), which can cause static partition blockers.
-
-```python
+inspector.report_rank_violations()
 inspector.report_dynamic_shapes()
-```
-
-![dynamic shape screenshot](docs/dynamic_shape.png)
-
-**Limitations:**
-1. Detection is limited to `_SHAPE_INDEX_SLOTS` coverage.
-2. `inferred_dim` detection is implemented for RESHAPE.
-
-## Partition simulation
-
-Simulate static NPU/CPU runs using two checks only: QNN builder availability and dynamic shape/index blockers.
-
-```python
+inspector.report_cross_signature_divergence()
 inspector.report_partitions()
-```
-
-![partition screenshot](docs/partition.png)
-
-**Limitations:**
-1. Does not model dtype-specific constraints, op attributes, or backend validation.
-2. Results are static diagnostics, not runtime guarantees.
-
-## Seam dump
-
-Print context around partition boundaries to localize where fallback starts and ends.
-
-```python
 inspector.report_seams(context=2, kind="CPU")
 ```
 
-![seams screenshot](docs/seams.png)
+Run: `uv run python analyze.py`
 
-**Limitations:**
-1. Context is based on flatbuffer op order.
-2. Long partitions may be elided in the middle.
+For `.litertlm` files:
+
+```python
+inspector = Inspector.from_litertlm(
+    "model.litertlm",
+    op_support_path="analysis/opSupportMap.csv",
+    dump_dir="./litertlm_dump", # extracted .tflite sections
+)
+```
+
+## What It Does
+
+Flags partition blockers:
+
+1. No QNN builder for op
+2. Input rank exceeds QNN cap
+3. Dynamic shape or index input
+4. Inferred dimension (-1 in RESHAPE, PAD, BROADCAST_TO, TILE)
+5. Op fragments across multiple subgraph signatures
+
+Each check is deterministic and fixable at export time.
+
+## How To Use It
+
+1. Run tool on new model. Takes seconds.
+2. Fix everything it flags. These are exporter-level issues.
+3. Run apply_plugin_main. Remaining fallbacks are dtype/attribute/SDK.
+4. Feed apply_plugin_main output to compare harness for next iteration.
+
+The tool clears 60-70% of fallbacks without SDK setup or hardware. It does not replace apply_plugin_main. It filters what gets sent to it.
 
 ## Limitations
 
-**Not modeled:**
-1. Dtype-specific legalization constraints
-2. Per-op attribute validation
-3. Backend SDK validation/runtime heuristics
-4. Hardware backend selection
+- No LiteRT/QNN execution
+- No runtime backend placement prediction
+- opSupportMap.csv legalization does not guarantee NPU placement

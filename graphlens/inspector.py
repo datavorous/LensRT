@@ -7,6 +7,10 @@ from .graph_parser import (
     TFLiteGraphParser,
     _find_dynamic_shape_ops,
     _report_dynamic_shape_ops,
+    _find_rank_violations,
+    _report_rank_violations,
+    _find_cross_signature_divergence,
+    _report_cross_signature_divergence,
 )
 from .partition_simulator import (
     OpSupport,
@@ -39,7 +43,9 @@ class Inspector:
     ) -> "Inspector":
         extracted = LiteRTLMExtractor.extract(litertlm_path, dump_dir)
         if not extracted:
-            raise RuntimeError(f"No .tflite sections were extracted from: {litertlm_path}")
+            raise RuntimeError(
+                f"No .tflite sections were extracted from: {litertlm_path}"
+            )
         return cls(model_path=extracted[0], op_support_path=op_support_path)
 
     @classmethod
@@ -54,12 +60,25 @@ class Inspector:
         self.partitions = _simulate_partition(self.graph, self.op_support)
 
     def _require_analysis(self) -> None:
-        if self.graph is None or self.op_support is None or self.dynamic_shape_ops is None or self.partitions is None:
+        if (
+            self.graph is None
+            or self.op_support is None
+            or self.dynamic_shape_ops is None
+            or self.partitions is None
+        ):
             raise RuntimeError("Inspector is not analyzed yet. Call analyze() first.")
 
     def report_dynamic_shapes(self, *args, **kwargs) -> None:
         self._require_analysis()
         _report_dynamic_shape_ops(self.graph, *args, **kwargs)
+
+    def report_rank_violations(self, *args, **kwargs) -> None:
+        self._require_analysis()
+        _report_rank_violations(self.graph, *args, **kwargs)
+
+    def report_cross_signature_divergence(self, *args, **kwargs) -> None:
+        self._require_analysis()
+        _report_cross_signature_divergence(self.graph, *args, **kwargs)
 
     def report_partitions(self, *args, **kwargs) -> None:
         self._require_analysis()

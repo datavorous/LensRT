@@ -9,6 +9,7 @@ backendValidateOpConfig. Real runtime partitioning may differ.
 
 A partition is a maximal contiguous run of ops with the same eligibility.
 """
+
 from __future__ import annotations
 
 import csv
@@ -19,21 +20,20 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .graph_parser import _find_dynamic_shape_ops, GREEN, RED, RESET
 
-
 # ---------------------------------------------------------------------------
 # opSupportMap.csv parser
 # ---------------------------------------------------------------------------
 
 # Irregular spellings the naive CamelCase->SNAKE converter gets wrong.
 _NAME_OVERRIDES: Dict[str, str] = {
-    "ReluN1To1":       "RELU_N1_TO_1",
-    "TopkV2":          "TOPK_V2",
-    "Padv2":           "PADV2",
-    "ReverseV2":       "REVERSE_V2",
-    "SelectV2":        "SELECT_V2",
-    "L2Pool2d":        "L2_POOL_2D",
+    "ReluN1To1": "RELU_N1_TO_1",
+    "TopkV2": "TOPK_V2",
+    "Padv2": "PADV2",
+    "ReverseV2": "REVERSE_V2",
+    "SelectV2": "SELECT_V2",
+    "L2Pool2d": "L2_POOL_2D",
     "L2Normalization": "L2_NORMALIZATION",
-    "BatchMatmul":     "BATCH_MATMUL",
+    "BatchMatmul": "BATCH_MATMUL",
 }
 
 _TFL_PREFIX = "kLiteRtOpCodeTfl"
@@ -66,12 +66,12 @@ def _load_op_support(csv_path: str) -> OpSupport:
             code = row["litert_op_code"]
 
             if code.startswith(_TFL_PREFIX):
-                name = _camel_to_upper_snake(code[len(_TFL_PREFIX):])
+                name = _camel_to_upper_snake(code[len(_TFL_PREFIX) :])
                 out.tfl_supported.add(name)
                 out.builder_file[name] = row.get("builder_file", "")
 
             elif code.startswith(_SHLO_PREFIX):
-                rest = code[len(_SHLO_PREFIX):]
+                rest = code[len(_SHLO_PREFIX) :]
                 if not rest.startswith(":"):
                     out.tfl_supported.add("STABLEHLO_COMPOSITE")
                     out.tfl_supported.add("SHLO_COMPOSITE")
@@ -82,13 +82,16 @@ def _load_op_support(csv_path: str) -> OpSupport:
 # Partition simulator
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Partition:
-    kind: str                       # 'NPU' | 'CPU'
-    op_indices: Tuple[int, int]     # inclusive (start, end) in subgraph order
+    kind: str  # 'NPU' | 'CPU'
+    op_indices: Tuple[int, int]  # inclusive (start, end) in subgraph order
     op_count: int
     subgraph: str
-    reason: Optional[str] = None    # CPU only: 'no_builder' | 'dynamic_shape' | 'unsupported_composite'
+    reason: Optional[str] = (
+        None  # CPU only: 'no_builder' | 'dynamic_shape' | 'unsupported_composite'
+    )
     op_breakdown: Counter = field(default_factory=Counter)
 
 
@@ -102,7 +105,9 @@ class PartitionResult:
 _COMPOSITE_NAMES = ("STABLEHLO_COMPOSITE", "SHLO_COMPOSITE")
 
 
-def _classify_op(op: Dict[str, Any], op_support: OpSupport, dynamic_indices: Set[int]) -> Tuple[bool, Optional[str]]:
+def _classify_op(
+    op: Dict[str, Any], op_support: OpSupport, dynamic_indices: Set[int]
+) -> Tuple[bool, Optional[str]]:
     # Only checks builder presence and dynamic shape; dtype and attribute constraints are not modeled.
     if op["index"] in dynamic_indices:
         return False, "dynamic_shape"
@@ -118,7 +123,9 @@ def _classify_op(op: Dict[str, Any], op_support: OpSupport, dynamic_indices: Set
     return False, "no_builder"
 
 
-def _simulate_partition(graph: Dict[str, Any], op_support: OpSupport) -> List[PartitionResult]:
+def _simulate_partition(
+    graph: Dict[str, Any], op_support: OpSupport
+) -> List[PartitionResult]:
     """Classify ops by static eligibility. Returns one PartitionResult per subgraph."""
     dyn_by_sg: Dict[str, Set[int]] = defaultdict(set)
     for d in _find_dynamic_shape_ops(graph):
@@ -129,12 +136,20 @@ def _simulate_partition(graph: Dict[str, Any], op_support: OpSupport) -> List[Pa
         ops = sg["ops"]
         dyn = dyn_by_sg[sg["name"]]
         partitions = _partition_subgraph(sg["name"], ops, op_support, dyn)
-        results.append(PartitionResult(subgraph=sg["name"], total_ops=len(ops), partitions=partitions))
+        results.append(
+            PartitionResult(
+                subgraph=sg["name"], total_ops=len(ops), partitions=partitions
+            )
+        )
     return results
 
 
-def _partition_subgraph(sg_name: str, ops: List[Dict[str, Any]],
-                         op_support: OpSupport, dynamic_indices: Set[int]) -> List[Partition]:
+def _partition_subgraph(
+    sg_name: str,
+    ops: List[Dict[str, Any]],
+    op_support: OpSupport,
+    dynamic_indices: Set[int],
+) -> List[Partition]:
     partitions: List[Partition] = []
     run_start = 0
     run_eligible: Optional[bool] = None
@@ -143,14 +158,16 @@ def _partition_subgraph(sg_name: str, ops: List[Dict[str, Any]],
 
     def flush(end: int):
         nonlocal run_breakdown
-        partitions.append(Partition(
-            kind="NPU" if run_eligible else "CPU",
-            op_indices=(ops[run_start]["index"], ops[end - 1]["index"]),
-            op_count=end - run_start,
-            subgraph=sg_name,
-            reason=None if run_eligible else run_reason,
-            op_breakdown=Counter() if run_eligible else run_breakdown,
-        ))
+        partitions.append(
+            Partition(
+                kind="NPU" if run_eligible else "CPU",
+                op_indices=(ops[run_start]["index"], ops[end - 1]["index"]),
+                op_count=end - run_start,
+                subgraph=sg_name,
+                reason=None if run_eligible else run_reason,
+                op_breakdown=Counter() if run_eligible else run_breakdown,
+            )
+        )
         run_breakdown = Counter()
 
     for i, op in enumerate(ops):
@@ -158,8 +175,11 @@ def _partition_subgraph(sg_name: str, ops: List[Dict[str, Any]],
 
         # A CPU run continues only if the reason matches; different reasons
         # become different partitions so the breakdown stays actionable.
-        same_run = (run_eligible is not None and eligible == run_eligible
-                    and (eligible or reason == run_reason))
+        same_run = (
+            run_eligible is not None
+            and eligible == run_eligible
+            and (eligible or reason == run_reason)
+        )
 
         if not same_run:
             if run_eligible is not None:
@@ -180,6 +200,7 @@ def _partition_subgraph(sg_name: str, ops: List[Dict[str, Any]],
 # Reports
 # ---------------------------------------------------------------------------
 
+
 def _report_partition(result: PartitionResult) -> None:
     parts = result.partitions
     npu = [p for p in parts if p.kind == "NPU"]
@@ -192,10 +213,14 @@ def _report_partition(result: PartitionResult) -> None:
         largest = max(npu, key=lambda p: p.op_count)
         smallest = min(npu, key=lambda p: p.op_count)
         avg = sum(p.op_count for p in npu) / len(npu)
-        print(f"  Largest  NPU partition: {GREEN}{largest.op_count}{RESET} ops "
-              f"(ops {largest.op_indices[0]}-{largest.op_indices[1]})")
-        print(f"  Smallest NPU partition: {RED}{smallest.op_count}{RESET} ops "
-              f"(ops {smallest.op_indices[0]}-{smallest.op_indices[1]})")
+        print(
+            f"  Largest  NPU partition: {GREEN}{largest.op_count}{RESET} ops "
+            f"(ops {largest.op_indices[0]}-{largest.op_indices[1]})"
+        )
+        print(
+            f"  Smallest NPU partition: {RED}{smallest.op_count}{RESET} ops "
+            f"(ops {smallest.op_indices[0]}-{smallest.op_indices[1]})"
+        )
         print(f"  Mean     NPU partition: {avg:.1f} ops")
     else:
         print(f"  {RED}No NPU partitions{RESET}")
@@ -222,15 +247,24 @@ def _report_partitions(results: List[PartitionResult]) -> None:
 # Seam dump - context around partition boundaries
 # ---------------------------------------------------------------------------
 
+
 def _fmt_op_oneline(op: Dict[str, Any]) -> str:
-    dtype = op["outputs"][0]["dtype"] if op["outputs"] else (op["inputs"][0]["dtype"] if op["inputs"] else "?")
+    dtype = (
+        op["outputs"][0]["dtype"]
+        if op["outputs"]
+        else (op["inputs"][0]["dtype"] if op["inputs"] else "?")
+    )
     in_shape = op["inputs"][0]["shape"] if op["inputs"] else []
     out_shape = op["outputs"][0]["shape"] if op["outputs"] else []
     return f"{op['opname']} {dtype} {in_shape} -> {out_shape}"
 
 
-def _report_seams(graph: Dict[str, Any], results: List[PartitionResult],
-                  context: int = 2, kind: str = "CPU") -> None:
+def _report_seams(
+    graph: Dict[str, Any],
+    results: List[PartitionResult],
+    context: int = 2,
+    kind: str = "CPU",
+) -> None:
     """Print ops surrounding every CPU (or NPU) partition. Useful for diagnosing why a run split."""
     ops_by_sg = {sg["name"]: sg["ops"] for sg in graph["subgraphs"]}
 
@@ -256,18 +290,19 @@ def _report_seams(graph: Dict[str, Any], results: List[PartitionResult],
             for j in range(max(0, start_pos - context), start_pos):
                 print(f"  prev: op {ops[j]['index']} {_fmt_op_oneline(ops[j])}")
 
-            inside = ops[start_pos:end_pos + 1]
+            inside = ops[start_pos : end_pos + 1]
             if len(inside) <= 2 * context + 1:
                 for op in inside:
                     print(f"  {RED}>>>{RESET}  op {op['index']} {_fmt_op_oneline(op)}")
             else:
                 for op in inside[:context]:
                     print(f"  {RED}>>>{RESET}  op {op['index']} {_fmt_op_oneline(op)}")
-                print(f"  {RED}>>>{RESET}  ... {len(inside) - 2 * context} more in this partition ...")
+                print(
+                    f"  {RED}>>>{RESET}  ... {len(inside) - 2 * context} more in this partition ..."
+                )
                 for op in inside[-context:]:
                     print(f"  {RED}>>>{RESET}  op {op['index']} {_fmt_op_oneline(op)}")
 
             for j in range(end_pos + 1, min(len(ops), end_pos + 1 + context)):
                 print(f"  next: op {ops[j]['index']} {_fmt_op_oneline(ops[j])}")
             print()
-

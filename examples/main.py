@@ -1,5 +1,3 @@
-# Run from the project root: uv run python examples/main.py
-# Expects gemma.litertlm two levels up (edge/gemma.litertlm).
 from graphlens import Inspector
 
 
@@ -14,8 +12,14 @@ inspector = Inspector.from_litertlm(
 )
 inspector.analyze()
 
+section("Rank violations")
+inspector.report_rank_violations()
+
 section("Dynamic shape / index inputs (fragmentation candidates)")
 inspector.report_dynamic_shapes()
+
+section("Cross-signature divergence")
+inspector.report_cross_signature_divergence()
 
 section("Partition simulation")
 inspector.report_partitions()

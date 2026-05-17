@@ -1,7 +1,7 @@
 [project]
 name = "graphlens"
 version = "0.1.0"
-description = "Static TFLite / LiteRT-LM graph analyzer for QNN partition blockers."
+description = "Static TFLite graph analyzer for QNN partition diagnostics."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
